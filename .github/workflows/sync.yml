@@ -1,25 +1,25 @@
-name: Upstream Sync
+name: Upstream Sync and Update Cloudflare IPs
 
 permissions:
   contents: write
 
 on:
   schedule:
-    - cron: "0 0 * * *" # every day
+    - cron: "0 0 * * *" # 每天 UTC 0 点执行（北京时间早上 8 点）
   workflow_dispatch:
 
 jobs:
   sync_latest_from_upstream:
-    name: Sync latest commits from upstream repo
+    name: Sync upstream repo + update cloudflare_ips.txt
     runs-on: ubuntu-latest
     if: ${{ github.event.repository.fork }}
 
     steps:
-      # Step 1: run a standard checkout action
+      # Step 1: 检出当前仓库（edgetunnel）
       - name: Checkout target repo
         uses: actions/checkout@v3
 
-      # Step 2: run the sync action
+      # Step 2: 同步上游仓库 cmliu/edgetunnel
       - name: Sync upstream changes
         id: sync
         uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
@@ -27,14 +27,33 @@ jobs:
           upstream_sync_repo: cmliu/edgetunnel
           upstream_sync_branch: main
           target_sync_branch: main
-          target_repo_token: ${{ secrets.GITHUB_TOKEN }} # automatically generated, no need to set
-
-          # Set test_mode true to run tests instead of the true action!!
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
           test_mode: false
 
+      # Step 3: 从你的 jerry 仓库拉取最新 cloudflare_ips.txt 文件
+      - name: Download cloudflare_ips.txt from jerry repo
+        run: |
+          echo "Fetching latest cloudflare_ips.txt from jerry..."
+          mkdir -p data
+          curl -sL https://raw.githubusercontent.com/chanriver/jerry/refs/heads/main/data/cloudflare_ips.txt -o data/cloudflare_ips.txt
+          echo "✅ File updated: data/cloudflare_ips.txt"
+
+      # Step 4: 提交文件变更（仅当文件内容变化时）
+      - name: Commit and push updated file
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/cloudflare_ips.txt
+            git commit -m "Auto update cloudflare_ips.txt from jerry ($(date -u '+%Y-%m-%d %H:%M:%S UTC'))"
+            git push
+          else
+            echo "No changes detected in cloudflare_ips.txt"
+          fi
+
+      # Step 5: 如果同步失败，输出提示
       - name: Sync check
         if: failure()
         run: |
-          echo "[Error] 由于上游仓库的 workflow 文件变更，导致 GitHub 自动暂停了本次自动更新，你需要手动 Sync Fork 一次，详细教程请查看项目README.md "
-          echo "[Error] Due to a change in the workflow file of the upstream repository, GitHub has automatically suspended the scheduled automatic update. You need to manually sync your fork. Please refer to the project README.md for instructions. "
+          echo "[Error] 上游仓库同步失败，或 workflow 被暂停，请手动同步一次。"
           exit 1
